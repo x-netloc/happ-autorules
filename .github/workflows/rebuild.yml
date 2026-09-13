@@ -1,0 +1,190 @@
+name: Rebuild Happ profiles
+
+on:
+  schedule:
+    - cron: '41 * * * *'
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/rebuild.yml'
+      - 'scripts/**'
+      - 'tests/**'
+
+permissions:
+  contents: write
+
+concurrency:
+  group: rebuild
+  cancel-in-progress: false
+
+env:
+  AUTORULES_REPOSITORY: x-netloc/autorules
+  AUTORULES_REF: main
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Test adapter
+        run: python3 -m unittest discover -s tests -v
+
+      - name: Fetch autorules
+        id: autorules
+        run: |
+          set -euo pipefail
+          git clone --depth 1 --branch "$AUTORULES_REF" \
+            "https://github.com/${AUTORULES_REPOSITORY}.git" canonical
+          python3 canonical/scripts/validate.py --root canonical
+          echo "commit=$(git -C canonical rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+
+          python3 - <<'PY'
+          import os
+          import tomllib
+
+          with open("canonical/catalog.toml", "rb") as handle:
+              upstream = tomllib.load(handle)["upstream"]
+
+          values = {
+              "upstream": upstream["repository"],
+              "upstream_ref": upstream["ref"],
+              "geosite_asset": upstream["geosite_asset"],
+              "geoip_asset": upstream["geoip_asset"],
+          }
+          with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as output:
+              for key, value in values.items():
+                  print(f"{key}={value}", file=output)
+          PY
+
+      - name: Fetch upstream checksums
+        id: source
+        env:
+          UPSTREAM: ${{ steps.autorules.outputs.upstream }}
+          UPSTREAM_REF: ${{ steps.autorules.outputs.upstream_ref }}
+          GEOSITE_ASSET: ${{ steps.autorules.outputs.geosite_asset }}
+          GEOIP_ASSET: ${{ steps.autorules.outputs.geoip_asset }}
+          AUTORULES_COMMIT: ${{ steps.autorules.outputs.commit }}
+        run: |
+          set -euo pipefail
+          base="https://raw.githubusercontent.com/${UPSTREAM}/${UPSTREAM_REF}"
+          curl -fsSL "$base/${GEOSITE_ASSET}.sha256sum" -o upstream.geosite.sha256
+          curl -fsSL "$base/${GEOIP_ASSET}.sha256sum" -o upstream.geoip.sha256
+
+          upstream_digest=$(cat upstream.geosite.sha256 upstream.geoip.sha256 | sha256sum | awk '{print $1}')
+          adapter_digest=$(sha256sum scripts/build.py .github/workflows/rebuild.yml | sha256sum | awk '{print $1}')
+          combined=$(printf '%s\n%s\n%s\n' "$upstream_digest" "$AUTORULES_COMMIT" "$adapter_digest" | sha256sum | awk '{print $1}')
+          echo "combined=$combined" >> "$GITHUB_OUTPUT"
+
+      - name: Decide whether to rebuild
+        id: check
+        env:
+          SOURCE_DIGEST: ${{ steps.source.outputs.combined }}
+        run: |
+          set -euo pipefail
+          if [ -f .source.sha256 ] && [ "$(cat .source.sha256)" = "$SOURCE_DIGEST" ]; then
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            echo "Sources unchanged, skipping rebuild."
+          else
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Setup Go
+        if: steps.check.outputs.skip != 'true'
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.22'
+
+      - name: Install v2dat
+        if: steps.check.outputs.skip != 'true'
+        run: go install github.com/urlesistiana/v2dat@latest
+
+      - name: Download upstream DAT
+        if: steps.check.outputs.skip != 'true'
+        env:
+          UPSTREAM: ${{ steps.autorules.outputs.upstream }}
+          UPSTREAM_REF: ${{ steps.autorules.outputs.upstream_ref }}
+          GEOSITE_ASSET: ${{ steps.autorules.outputs.geosite_asset }}
+          GEOIP_ASSET: ${{ steps.autorules.outputs.geoip_asset }}
+        run: |
+          set -euo pipefail
+          base="https://raw.githubusercontent.com/${UPSTREAM}/${UPSTREAM_REF}"
+          curl -fsSL "$base/$GEOSITE_ASSET" -o "$GEOSITE_ASSET"
+          curl -fsSL "$base/$GEOIP_ASSET" -o "$GEOIP_ASSET"
+          sha256sum -c upstream.geosite.sha256
+          sha256sum -c upstream.geoip.sha256
+
+      - name: Validate catalog categories against DAT
+        if: steps.check.outputs.skip != 'true'
+        env:
+          GEOSITE_ASSET: ${{ steps.autorules.outputs.geosite_asset }}
+          GEOIP_ASSET: ${{ steps.autorules.outputs.geoip_asset }}
+        run: |
+          set -euo pipefail
+          mkdir -p unpacked/geosite unpacked/geoip
+          v2dat unpack geosite -o unpacked/geosite "$GEOSITE_ASSET"
+          v2dat unpack geoip -o unpacked/geoip "$GEOIP_ASSET"
+
+      - name: Build profiles and deeplinks
+        if: steps.check.outputs.skip != 'true'
+        env:
+          GEOSITE_ASSET: ${{ steps.autorules.outputs.geosite_asset }}
+          GEOIP_ASSET: ${{ steps.autorules.outputs.geoip_asset }}
+        run: |
+          set -euo pipefail
+          python3 scripts/build.py \
+            --catalog canonical/catalog.toml \
+            --profiles canonical/profiles \
+            --geosite-in unpacked/geosite \
+            --geoip-in unpacked/geoip \
+            --out build \
+            --last-updated "$(date +%s)" \
+            --repository "${{ github.repository }}"
+          cp "$GEOSITE_ASSET" build/geosite.dat
+          cp "$GEOIP_ASSET" build/geoip.dat
+          cd build
+          sha256sum geosite.dat geoip.dat > SHA256SUMS
+          sha256sum -c SHA256SUMS
+
+      - name: Force-push output to dist branch
+        if: steps.check.outputs.skip != 'true'
+        env:
+          SOURCE_DIGEST: ${{ steps.source.outputs.combined }}
+          AUTORULES_COMMIT: ${{ steps.autorules.outputs.commit }}
+        run: |
+          set -euo pipefail
+          echo "$SOURCE_DIGEST" > build/.source.sha256
+          echo "$AUTORULES_COMMIT" > build/.autorules.commit
+          work="$(mktemp -d)"
+          cp -r build/. "$work/"
+          cd "$work"
+          git init -q -b dist
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git remote add origin "https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.git"
+          git add .
+          git commit -q -m "dist: source $SOURCE_DIGEST"
+          git push -q --force origin dist
+
+      - name: Update source marker on main
+        if: steps.check.outputs.skip != 'true'
+        env:
+          SOURCE_DIGEST: ${{ steps.source.outputs.combined }}
+          AUTORULES_COMMIT: ${{ steps.autorules.outputs.commit }}
+        run: |
+          set -euo pipefail
+          echo "$SOURCE_DIGEST" > .source.sha256
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add .source.sha256
+          if git diff --cached --quiet; then
+            echo "No marker change."
+          else
+            git commit -q -m "build: autorules ${AUTORULES_COMMIT:0:12}"
+            git push -q
+          fi

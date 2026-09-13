@@ -1,0 +1,9 @@
+geosite.dat
+geoip.dat
+upstream.*.sha256
+canonical/
+unpacked/
+build/
+*.pyc
+__pycache__/
+.DS_Store
