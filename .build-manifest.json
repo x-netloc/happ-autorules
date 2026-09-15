@@ -1,0 +1,40 @@
+{
+  "source": "runetfreedom/russia-v2ray-rules-dat@release",
+  "last_updated": 1789480325,
+  "categories": {
+    "geosite": 23,
+    "geoip": 12
+  },
+  "profiles": {
+    "bypass-blacklist": {
+      "global_proxy": "false",
+      "route_order": "direct-proxy-block",
+      "direct_sites": 1,
+      "direct_ip": 1,
+      "proxy_sites": 7,
+      "proxy_ip": 8,
+      "block_sites": 0,
+      "block_ip": 0
+    },
+    "freedom-no-ru": {
+      "global_proxy": "true",
+      "route_order": "direct-proxy-block",
+      "direct_sites": 12,
+      "direct_ip": 2,
+      "proxy_sites": 0,
+      "proxy_ip": 0,
+      "block_sites": 0,
+      "block_ip": 0
+    },
+    "freedom-no-ru-no-ads": {
+      "global_proxy": "true",
+      "route_order": "block-direct-proxy",
+      "direct_sites": 12,
+      "direct_ip": 2,
+      "proxy_sites": 0,
+      "proxy_ip": 0,
+      "block_sites": 1,
+      "block_ip": 0
+    }
+  }
+}
