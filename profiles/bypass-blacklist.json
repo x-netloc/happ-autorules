@@ -1,0 +1,48 @@
+{
+  "Name": "bypass-blacklist",
+  "GlobalProxy": "false",
+  "UseChunkFiles": "true",
+  "RemoteDNSType": "DoH",
+  "RemoteDNSDomain": "https://cloudflare-dns.com/dns-query",
+  "RemoteDNSIP": "1.1.1.1",
+  "DomesticDNSType": "DoH",
+  "DomesticDNSDomain": "https://dns.google/dns-query",
+  "DomesticDNSIP": "8.8.8.8",
+  "Geoipurl": "https://raw.githubusercontent.com/x-netloc/happ-autorules/dist/geoip.dat",
+  "Geositeurl": "https://raw.githubusercontent.com/x-netloc/happ-autorules/dist/geosite.dat",
+  "LastUpdated": "1789817627",
+  "DnsHosts": {
+    "cloudflare-dns.com": "1.1.1.1",
+    "dns.google": "8.8.8.8"
+  },
+  "RouteOrder": "direct-proxy-block",
+  "DirectSites": [
+    "geosite:private"
+  ],
+  "DirectIp": [
+    "geoip:private"
+  ],
+  "ProxySites": [
+    "geosite:youtube",
+    "geosite:openai",
+    "geosite:discord",
+    "geosite:telegram",
+    "geosite:meta",
+    "geosite:twitter",
+    "geosite:ru-blocked"
+  ],
+  "ProxyIp": [
+    "geoip:cloudflare",
+    "geoip:cloudfront",
+    "geoip:fastly",
+    "geoip:facebook",
+    "geoip:telegram",
+    "geoip:twitter",
+    "geoip:ru-blocked",
+    "geoip:re-filter"
+  ],
+  "BlockSites": [],
+  "BlockIp": [],
+  "DomainStrategy": "IPIfNonMatch",
+  "FakeDNS": "false"
+}
